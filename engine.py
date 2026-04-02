@@ -51,13 +51,17 @@ def calculate_match_points(result, tournament_id, opp_rank, location, is_playoff
     if is_god == 1 and opp_rank <= 20: mod += 0.1
     return base * t * c * (1 + mod) * r_coef
 
-# --- 2. ПРОЦЕСОР З ПІДТРИМКОЮ ГРАФІКІВ ---
+def get_current_ranks(teams_dict):
+    sorted_teams = sorted(teams_dict.items(), key=lambda x: x[1], reverse=True)
+    return {team: i + 1 for i, (team, score) in enumerate(sorted_teams)}
+
+# --- 2. ПРОЦЕСОР ---
 def process_matches(df):
     if df.empty: return pd.DataFrame(), {}, {}
     
     teams = {}
     team_history = {}
-    points_over_time = {} # Новий словник для графіків
+    points_over_time = {}
     
     all_teams = pd.concat([df['Team_A'], df['Team_B']]).unique()
     for team in all_teams:
@@ -96,16 +100,24 @@ def process_matches(df):
         teams[team_a] += pts_a
         teams[team_b] += pts_b
 
-        # Запис для графіка
         points_over_time[team_a].append({'Date': row['Date'], 'Points': round(teams[team_a], 2)})
         points_over_time[team_b].append({'Date': row['Date'], 'Points': round(teams[team_b], 2)})
 
-        # Запис в історію
         date_str = row['Date'].strftime('%Y-%m-%d')
         team_history[team_a].append(f"{date_str} | {row['Tournament']} | vs {team_b} ({row['Score_A']}:{row['Score_B']}) | {pts_a:+.2f}")
         team_history[team_b].append(f"{date_str} | {row['Tournament']} | vs {team_a} ({row['Score_B']}:{row['Score_A']}) | {pts_b:+.2f}")
 
     final_ranks = get_current_ranks(teams)
+    
+    # СИСТЕМА "ЧАСОВОГО ЗАМКА":
+    # Якщо найновіший матч зіграно до 1 травня 2026, примусово не показуємо зміни.
+    # Коли база підтягне матчі за вересень 2026, цей блок вимкнеться.
+    is_initial_run = current_date <= pd.to_datetime('2026-05-01')
+
+    if not previous_teams or is_initial_run:
+        previous_teams = teams.copy()
+        previous_ranks = final_ranks.copy()
+
     result_list = []
     for team, score in teams.items():
         curr_rank = final_ranks[team]
@@ -118,7 +130,10 @@ def process_matches(df):
 
         curr_pts = round(score, 2)
         pts_diff = round(curr_pts - round(previous_teams.get(team, 100.0), 2), 2)
-        pts_trend = f"{pts_diff:+.2f}"
+        
+        if pts_diff > 0: pts_trend = f"+{pts_diff:.2f}"
+        elif pts_diff < 0: pts_trend = f"{pts_diff:.2f}"
+        else: pts_trend = "0.00"
 
         result_list.append({'SortRank': curr_rank, 'Місце': trend, 'Збірна': team, 'Бали': curr_pts, 'Зміна очок': pts_trend})
         
@@ -126,13 +141,3 @@ def process_matches(df):
     for t in team_history: team_history[t] = list(reversed(team_history[t]))[:5]
 
     return final_df, team_history, points_over_time
-
-def get_current_ranks(teams_dict):
-    sorted_teams = sorted(teams_dict.items(), key=lambda x: x[1], reverse=True)
-    return {team: i + 1 for i, (team, score) in enumerate(sorted_teams)}
-
-def load_data(file_obj):
-    df = pd.read_csv(file_obj)
-    df['Date'] = pd.to_datetime(df['Date'])
-    df = df.sort_values(by='Date').reset_index(drop=True)
-    return df
